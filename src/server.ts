@@ -385,6 +385,51 @@ export const createMcpServer = (): McpServer => {
 	);
 
 	tool(
+		"link_mobile_observe",
+		"LINK Mobile Observe",
+		"LINK intelligence entry point for read-first mobile perception. Resolves local devices and returns a normalized LINK observation envelope. Use this when LINK needs to discover what mobile execution surfaces are currently available before deciding an action.",
+		{
+			missionId: z.string().min(1).describe("LINK mission identifier"),
+			project: z.string().min(1).describe("LINK project or nucleus requesting the observation"),
+			platform: z.enum(["ios", "android"]).optional().describe("Optional target platform filter"),
+		},
+		{ readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+		async ({ missionId, project, platform }, telemetry) => {
+			ensureMobilecliAvailable();
+
+			const response = mobilecli.getDevices({ includeOffline: false });
+			const devices: MobilecliDevice[] =
+				response.status === "ok" && response.data?.devices
+					? response.data.devices.filter((device: MobilecliDevice) =>
+						device.state === "online" && (!platform || device.platform === platform))
+					: [];
+
+			telemetry.LinkDeviceCount = devices.length;
+
+			return JSON.stringify({
+				protocol: "link-mobile/0.1",
+				kind: "observation",
+				missionId,
+				project,
+				timestamp: new Date().toISOString(),
+				capability: "device-discovery",
+				transport: "local",
+				status: devices.length > 0 ? "ready" : "no-local-device",
+				devices: devices.map(device => ({
+					id: device.id,
+					name: device.name,
+					platform: device.platform,
+					type: device.type,
+					version: device.version,
+				})),
+				next: devices.length > 0
+					? "Choose a device and continue perception with the existing Mobile Next accessibility tools."
+					: "No local device is online. LINK may use the cloud transport when explicitly configured/authorized.",
+			});
+		}
+	);
+
+	tool(
 		"mobile_login_to_cloud_provider",
 		"Login to Cloud Provider",
 		"Start authenticating this machine with the remote device cloud provider. This is required once before mobile_list_remote_devices or mobile_allocate_remote_device will work; if either of those fails with an authentication error, call this tool and then retry. " +
