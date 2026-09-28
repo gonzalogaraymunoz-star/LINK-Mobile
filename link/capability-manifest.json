@@ -1,0 +1,34 @@
+{
+  "name": "link-mobile-intelligence",
+  "version": "0.1.0",
+  "purpose": "Use mobile interfaces as a perception and action surface for LINK intelligence.",
+  "transports": [
+    "auto",
+    "local",
+    "cloud"
+  ],
+  "loop": [
+    "perceive",
+    "interpret",
+    "decide",
+    "act",
+    "observe",
+    "remember",
+    "reuse"
+  ],
+  "upstreamTools": [
+    "mobile_list_available_devices",
+    "mobile_list_remote_devices",
+    "mobile_login_to_cloud_provider"
+  ],
+  "defaultPolicy": {
+    "externalEffects": false,
+    "mode": "read-first"
+  },
+  "outputs": [
+    "observation",
+    "answer",
+    "evidence",
+    "reusable_flow"
+  ]
+}

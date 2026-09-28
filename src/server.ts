@@ -385,6 +385,51 @@ export const createMcpServer = (): McpServer => {
 	);
 
 	tool(
+		"link_mobile_observe",
+		"LINK Mobile Observe",
+		"LINK intelligence entry point for read-first mobile perception. Resolves local devices and returns a normalized LINK observation envelope. Use this when LINK needs to discover what mobile execution surfaces are currently available before deciding an action.",
+		{
+			missionId: z.string().min(1).describe("LINK mission identifier"),
+			project: z.string().min(1).describe("LINK project or nucleus requesting the observation"),
+			platform: z.enum(["ios", "android"]).optional().describe("Optional target platform filter"),
+		},
+		{ readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+		async ({ missionId, project, platform }, telemetry) => {
+			ensureMobilecliAvailable();
+
+			const response = mobilecli.getDevices({ includeOffline: false });
+			const devices: MobilecliDevice[] =
+				response.status === "ok" && response.data?.devices
+					? response.data.devices.filter((device: MobilecliDevice) =>
+						device.state === "online" && (!platform || device.platform === platform))
+					: [];
+
+			telemetry.LinkDeviceCount = devices.length;
+
+			return JSON.stringify({
+				protocol: "link-mobile/0.1",
+				kind: "observation",
+				missionId,
+				project,
+				timestamp: new Date().toISOString(),
+				capability: "device-discovery",
+				transport: "local",
+				status: devices.length > 0 ? "ready" : "no-local-device",
+				devices: devices.map(device => ({
+					id: device.id,
+					name: device.name,
+					platform: device.platform,
+					type: device.type,
+					version: device.version,
+				})),
+				next: devices.length > 0
+					? "Choose a device and continue perception with the existing Mobile Next accessibility tools."
+					: "No local device is online. LINK may use the cloud transport when explicitly configured/authorized.",
+			});
+		}
+	);
+
+	tool(
 		"mobile_login_to_cloud_provider",
 		"Login to Cloud Provider",
 		"Start authenticating this machine with the remote device cloud provider. This is required once before mobile_list_remote_devices or mobile_allocate_remote_device will work; if either of those fails with an authentication error, call this tool and then retry. " +
@@ -670,6 +715,83 @@ export const createMcpServer = (): McpServer => {
 	);
 
 	tool(
+		"link_mobile_act",
+		"LINK Mobile Act",
+		"Execute one policy-scoped reversible mobile action for a LINK mission, then immediately re-perceive the screen and return the resulting observation. External-effect actions are intentionally not exposed by this primitive.",
+		{
+			missionId: z.string().min(1).describe("LINK mission identifier"),
+			project: z.string().min(1).describe("LINK project or nucleus"),
+			device: z.string().min(1).describe("Device identifier"),
+			action: z.enum(["tap", "swipe", "type", "launch", "open_url"]).describe("Allowed reversible primitive"),
+			ref: z.string().optional().describe("Accessibility element ref for tap, preferred over coordinates"),
+			x: z.coerce.number().min(0).optional(),
+			y: z.coerce.number().min(0).optional(),
+			direction: z.enum(["up", "down", "left", "right"]).optional(),
+			distance: z.coerce.number().positive().optional(),
+			text: z.string().optional(),
+			submit: z.boolean().optional(),
+			packageName: z.string().optional(),
+			url: z.string().url().optional(),
+		},
+		{ readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+		async ({ missionId, project, device, action, ref, x, y, direction, distance, text, submit, packageName, url }, telemetry) => {
+			const robot = getRobotFromDevice(device);
+			let actionResult: string;
+
+			switch (action) {
+				case "tap":
+					if (ref !== undefined) {
+						if (!robot.tapByRef) throw new ActionableError("Tapping by ref is not supported in legacy robot mode");
+						await robot.tapByRef(ref);
+						actionResult = `Tapped element ${ref}`;
+					} else {
+						if (x === undefined || y === undefined) throw new ActionableError("tap requires ref or both x and y");
+						await robot.tap(x, y);
+						actionResult = `Tapped coordinates ${x},${y}`;
+					}
+					break;
+				case "swipe":
+					if (!direction) throw new ActionableError("swipe requires direction");
+					await robot.swipe(direction, distance);
+					actionResult = `Swiped ${direction}`;
+					break;
+				case "type":
+					if (text === undefined) throw new ActionableError("type requires text");
+					await robot.sendKeys(text);
+					if (submit) await robot.pressButton("ENTER");
+					actionResult = "Typed text";
+					break;
+				case "launch":
+					if (!packageName) throw new ActionableError("launch requires packageName");
+					await robot.launchApp(packageName);
+					actionResult = `Launched ${packageName}`;
+					break;
+				case "open_url":
+					if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) throw new ActionableError("open_url requires an http(s) URL");
+					await robot.openUrl(url);
+					actionResult = `Opened ${url}`;
+					break;
+			}
+
+			const elements = await robot.getElementsOnScreen();
+			const screen = await robot.getScreenSize();
+			telemetry.LinkElementCount = elements.length;
+
+			return JSON.stringify({
+				protocol: "link-mobile/0.1",
+				kind: "action-result",
+				missionId,
+				project,
+				timestamp: new Date().toISOString(),
+				device,
+				action: { type: action, result: actionResult },
+				observation: { screen, elementCount: elements.length, elements },
+				next: "Interpret the new observation against the mission objective. Stop if satisfied; otherwise choose the next policy-allowed action."
+			});
+		}
+	);
+
+	tool(
 		"mobile_double_tap_on_screen",
 		"Double Tap Screen",
 		"Double-tap on the screen at given x,y coordinates.",
@@ -718,6 +840,38 @@ export const createMcpServer = (): McpServer => {
 			const robot = getRobotFromDevice(device);
 			const elements = await robot.getElementsOnScreen();
 			return formatElements(elements, format);
+		}
+	);
+
+	tool(
+		"link_mobile_perceive",
+		"LINK Mobile Perceive",
+		"Read the current mobile UI through Mobile Next accessibility data and return it as a normalized LINK observation. This is the primary read-only perception primitive for LINK intelligence.",
+		{
+			missionId: z.string().min(1).describe("LINK mission identifier"),
+			project: z.string().min(1).describe("LINK project or nucleus"),
+			device: z.string().min(1).describe("Device identifier selected during LINK observation/discovery"),
+		},
+		{ readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+		async ({ missionId, project, device }, telemetry) => {
+			const robot = getRobotFromDevice(device);
+			const elements = await robot.getElementsOnScreen();
+			const screen = await robot.getScreenSize();
+			telemetry.LinkElementCount = elements.length;
+
+			return JSON.stringify({
+				protocol: "link-mobile/0.1",
+				kind: "observation",
+				missionId,
+				project,
+				timestamp: new Date().toISOString(),
+				capability: "screen-perception",
+				device,
+				screen,
+				elementCount: elements.length,
+				elements,
+				next: "Interpret this observation against the mission objective, then choose only a policy-allowed action. Re-perceive after the screen changes."
+			});
 		}
 	);
 
