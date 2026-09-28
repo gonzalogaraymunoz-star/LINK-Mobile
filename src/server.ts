@@ -232,6 +232,11 @@ export const createMcpServer = (): McpServer => {
 	// cache per device id, saves ~0.2s (mobilecli --version + devices) on every tool call
 	const robotCache = new Map<string, Robot>();
 
+	// Remote devices are confirmed by Mobile Next at allocation time. Keep their
+	// ids for the lifetime of this MCP server so later actions do not depend on
+	// mobilecli devices rediscovering the cloud session.
+	const linkRemoteDevices = new Set<string>();
+
 	const getRobotFromDevice = (deviceId: string): Robot => {
 		const cached = robotCache.get(deviceId);
 		if (cached) {
@@ -247,6 +252,10 @@ export const createMcpServer = (): McpServer => {
 
 		// from now on, we must have mobilecli working
 		ensureMobilecliAvailable();
+
+		if (linkRemoteDevices.has(deviceId)) {
+			return new MobileDevice(deviceId);
+		}
 
 		const legacyRobot = process.env.MOBILEMCP_LEGACY_ROBOT === "1";
 		if (legacyRobot) {
@@ -543,6 +552,22 @@ export const createMcpServer = (): McpServer => {
 		async ({ platform, name, version, type, wait, timeoutSeconds }) => {
 			ensureMobilecliAvailable();
 			const result = mobilecli.remoteAllocate({ platform, name, version, type, wait, timeoutSeconds });
+
+			// A successful --wait allocation includes the concrete cloud device.
+			// Trust that allocation result instead of requiring a second
+			// mobilecli devices discovery, which is not reliable in stateless
+			// Codespaces/Vercel executions.
+			try {
+				const parsed = typeof result === "string" ? JSON.parse(result) : result;
+				const remoteDeviceId = parsed?.data?.device?.id;
+				if (parsed?.status === "ok" && remoteDeviceId) {
+					linkRemoteDevices.add(remoteDeviceId);
+					robotCache.delete(remoteDeviceId);
+				}
+			} catch {
+				// Preserve upstream response if the provider changes its shape.
+			}
+
 			return result;
 		}
 	);
@@ -560,6 +585,8 @@ export const createMcpServer = (): McpServer => {
 		async ({ device }) => {
 			ensureMobilecliAvailable();
 			const result = mobilecli.remoteRelease(device);
+			linkRemoteDevices.delete(device);
+			robotCache.delete(device);
 			return result;
 		}
 	);
