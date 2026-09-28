@@ -715,6 +715,83 @@ export const createMcpServer = (): McpServer => {
 	);
 
 	tool(
+		"link_mobile_act",
+		"LINK Mobile Act",
+		"Execute one policy-scoped reversible mobile action for a LINK mission, then immediately re-perceive the screen and return the resulting observation. External-effect actions are intentionally not exposed by this primitive.",
+		{
+			missionId: z.string().min(1).describe("LINK mission identifier"),
+			project: z.string().min(1).describe("LINK project or nucleus"),
+			device: z.string().min(1).describe("Device identifier"),
+			action: z.enum(["tap", "swipe", "type", "launch", "open_url"]).describe("Allowed reversible primitive"),
+			ref: z.string().optional().describe("Accessibility element ref for tap, preferred over coordinates"),
+			x: z.coerce.number().min(0).optional(),
+			y: z.coerce.number().min(0).optional(),
+			direction: z.enum(["up", "down", "left", "right"]).optional(),
+			distance: z.coerce.number().positive().optional(),
+			text: z.string().optional(),
+			submit: z.boolean().optional(),
+			packageName: z.string().optional(),
+			url: z.string().url().optional(),
+		},
+		{ readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+		async ({ missionId, project, device, action, ref, x, y, direction, distance, text, submit, packageName, url }, telemetry) => {
+			const robot = getRobotFromDevice(device);
+			let actionResult: string;
+
+			switch (action) {
+				case "tap":
+					if (ref !== undefined) {
+						if (!robot.tapByRef) throw new ActionableError("Tapping by ref is not supported in legacy robot mode");
+						await robot.tapByRef(ref);
+						actionResult = `Tapped element ${ref}`;
+					} else {
+						if (x === undefined || y === undefined) throw new ActionableError("tap requires ref or both x and y");
+						await robot.tap(x, y);
+						actionResult = `Tapped coordinates ${x},${y}`;
+					}
+					break;
+				case "swipe":
+					if (!direction) throw new ActionableError("swipe requires direction");
+					await robot.swipe(direction, distance);
+					actionResult = `Swiped ${direction}`;
+					break;
+				case "type":
+					if (text === undefined) throw new ActionableError("type requires text");
+					await robot.sendKeys(text);
+					if (submit) await robot.pressButton("ENTER");
+					actionResult = "Typed text";
+					break;
+				case "launch":
+					if (!packageName) throw new ActionableError("launch requires packageName");
+					await robot.launchApp(packageName);
+					actionResult = `Launched ${packageName}`;
+					break;
+				case "open_url":
+					if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) throw new ActionableError("open_url requires an http(s) URL");
+					await robot.openUrl(url);
+					actionResult = `Opened ${url}`;
+					break;
+			}
+
+			const elements = await robot.getElementsOnScreen();
+			const screen = await robot.getScreenSize();
+			telemetry.LinkElementCount = elements.length;
+
+			return JSON.stringify({
+				protocol: "link-mobile/0.1",
+				kind: "action-result",
+				missionId,
+				project,
+				timestamp: new Date().toISOString(),
+				device,
+				action: { type: action, result: actionResult },
+				observation: { screen, elementCount: elements.length, elements },
+				next: "Interpret the new observation against the mission objective. Stop if satisfied; otherwise choose the next policy-allowed action."
+			});
+		}
+	);
+
+	tool(
 		"mobile_double_tap_on_screen",
 		"Double Tap Screen",
 		"Double-tap on the screen at given x,y coordinates.",
