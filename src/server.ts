@@ -736,7 +736,7 @@ export const createMcpServer = (): McpServer => {
 		{ readOnlyHint: false, destructiveHint: false, openWorldHint: true },
 		async ({ missionId, project, device, action, ref, x, y, direction, distance, text, submit, packageName, url }, telemetry) => {
 			const robot = getRobotFromDevice(device);
-			let actionResult: string;
+			let actionResult = "Action completed";
 
 			switch (action) {
 				case "tap":
@@ -752,7 +752,12 @@ export const createMcpServer = (): McpServer => {
 					break;
 				case "swipe":
 					if (!direction) throw new ActionableError("swipe requires direction");
-					await robot.swipe(direction, distance);
+					if (distance !== undefined) {
+						const screen = await robot.getScreenSize();
+						await robot.swipeFromCoordinate(Math.round(screen.width / 2), Math.round(screen.height / 2), direction, distance);
+					} else {
+						await robot.swipe(direction);
+					}
 					actionResult = `Swiped ${direction}`;
 					break;
 				case "type":
