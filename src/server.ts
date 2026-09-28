@@ -767,6 +767,38 @@ export const createMcpServer = (): McpServer => {
 	);
 
 	tool(
+		"link_mobile_perceive",
+		"LINK Mobile Perceive",
+		"Read the current mobile UI through Mobile Next accessibility data and return it as a normalized LINK observation. This is the primary read-only perception primitive for LINK intelligence.",
+		{
+			missionId: z.string().min(1).describe("LINK mission identifier"),
+			project: z.string().min(1).describe("LINK project or nucleus"),
+			device: z.string().min(1).describe("Device identifier selected during LINK observation/discovery"),
+		},
+		{ readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+		async ({ missionId, project, device }, telemetry) => {
+			const robot = getRobotFromDevice(device);
+			const elements = await robot.getElementsOnScreen();
+			const screen = await robot.getScreenSize();
+			telemetry.LinkElementCount = elements.length;
+
+			return JSON.stringify({
+				protocol: "link-mobile/0.1",
+				kind: "observation",
+				missionId,
+				project,
+				timestamp: new Date().toISOString(),
+				capability: "screen-perception",
+				device,
+				screen,
+				elementCount: elements.length,
+				elements,
+				next: "Interpret this observation against the mission objective, then choose only a policy-allowed action. Re-perceive after the screen changes."
+			});
+		}
+	);
+
+	tool(
 		"mobile_press_button",
 		"Press Button",
 		"Press a button on device",
