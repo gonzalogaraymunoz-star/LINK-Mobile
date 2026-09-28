@@ -19,7 +19,8 @@
     "test": "c8 playwright test",
     "watch": "tsc --watch",
     "clean": "rm -rf lib",
-    "prepare": "husky"
+    "prepare": "husky",
+    "vercel-build": "npm run build"
   },
   "files": [
     "lib"
